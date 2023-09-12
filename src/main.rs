@@ -1,80 +1,68 @@
-use std::{
-    io::{self, Stdout},
-    time::Duration,
-};
-
-use anyhow::{Context, Result};
 use crossterm::{
-    event::{self, Event, KeyCode},
+    event::{self, DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{prelude::*, widgets::*};
+use ratatui::{
+    backend::Backend,
+    layout::{Constraint, Direction, Layout},
+    widgets::{Block, Borders},
+    Frame,
+};
+use ratatui::{backend::CrosstermBackend, Terminal};
 
-/// This is a bare minimum example. There are many approaches to running an application loop, so
-/// this is not meant to be prescriptive. It is only meant to demonstrate the basic setup and
-/// teardown of a terminal application.
-///
-/// A more robust application would probably want to handle errors and ensure that the terminal is
-/// restored to a sane state before exiting. This example does not do that. It also does not handle
-/// events or update the application state. It just draws a greeting and exits when the user
-/// presses 'q'.
-fn main() -> Result<()> {
-    let mut terminal = setup_terminal().context("setup failed")?;
-    run(&mut terminal).context("app loop failed")?;
-    restore_terminal(&mut terminal).context("restore terminal failed")?;
-    Ok(())
+use std::{io, thread, time::Duration};
+
+fn ui<B: Backend>(f: &mut Frame<B>) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints(
+            [
+                Constraint::Percentage(20),
+                Constraint::Percentage(20),
+                Constraint::Percentage(30),
+            ]
+            .as_ref(),
+        )
+        .split(f.size());
+    let block = Block::default().title("Block").borders(Borders::ALL);
+    f.render_widget(block, chunks[0]);
+    let block = Block::default().title("Block 2").borders(Borders::ALL);
+    f.render_widget(block, chunks[1]);
 }
 
-/// Setup the terminal. This is where you would enable raw mode, enter the alternate screen, and
-/// hide the cursor. This example does not handle errors. A more robust application would probably
-/// want to handle errors and ensure that the terminal is restored to a sane state before exiting.
-fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
+fn main() -> Result<(), io::Error> {
+    // setup terminal
+    enable_raw_mode()?;
     let mut stdout = io::stdout();
-    enable_raw_mode().context("failed to enable raw mode")?;
-    execute!(stdout, EnterAlternateScreen).context("unable to enter alternate screen")?;
-    Terminal::new(CrosstermBackend::new(stdout)).context("creating terminal failed")
-}
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
 
-/// Restore the terminal. This is where you disable raw mode, leave the alternate screen, and show
-/// the cursor.
-fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
-    disable_raw_mode().context("failed to disable raw mode")?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)
-        .context("unable to switch to main screen")?;
-    terminal.show_cursor().context("unable to show cursor")
-}
+    // terminal.draw(|f| {
+    //     let size = f.size();
+    //     let block = Block::default().title("Block").borders(Borders::ALL);
+    //     f.render_widget(block, size);
+    // })?;
+    terminal.draw(ui);
 
-/// Run the application loop. This is where you would handle events and update the application
-/// state. This example exits when the user presses 'q'. Other styles of application loops are
-/// possible, for example, you could have multiple application states and switch between them based
-/// on events, or you could have a single application state and update it based on events.
-fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
-    loop {
-        terminal.draw(crate::render_app)?;
-        if should_quit()? {
-            break;
-        }
-    }
+    // Start a thread to discard any input events. Without handling events, the
+    // stdin buffer will fill up, and be read into the shell when the program exits.
+    thread::spawn(|| loop {
+        event::read();
+    });
+
+    thread::sleep(Duration::from_millis(5000));
+
+    // restore terminal
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
+    terminal.show_cursor()?;
+
     Ok(())
-}
-
-/// Render the application. This is where you would draw the application UI. This example just
-/// draws a greeting.
-fn render_app(frame: &mut ratatui::Frame<CrosstermBackend<Stdout>>) {
-    let greeting = Paragraph::new("Hello World! (press 'q' to quit)");
-    frame.render_widget(greeting, frame.size());
-}
-
-/// Check if the user has pressed 'q'. This is where you would handle events. This example just
-/// checks if the user has pressed 'q' and returns true if they have. It does not handle any other
-/// events. There is a 250ms timeout on the event poll so that the application can exit in a timely
-/// manner, and to ensure that the terminal is rendered at least once every 250ms.
-fn should_quit() -> Result<bool> {
-    if event::poll(Duration::from_millis(250)).context("event poll failed")? {
-        if let Event::Key(key) = event::read().context("event read failed")? {
-            return Ok(KeyCode::Char('q') == key.code);
-        }
-    }
-    Ok(false)
 }
